@@ -31,7 +31,7 @@ function Write-Step {
 
 function Resolve-SevenZip {
     if ($SevenZipPath) {
-        if (Test-Path $SevenZipPath) { return $SevenZipPath }
+        if (Test-Path -LiteralPath $SevenZipPath) { return $SevenZipPath }
         throw "7z.exe not found at -SevenZipPath '$SevenZipPath'."
     }
     $candidates = @(
@@ -39,7 +39,7 @@ function Resolve-SevenZip {
         "${env:ProgramFiles(x86)}\7-Zip\7z.exe"
     )
     foreach ($c in $candidates) {
-        if (Test-Path $c) { return $c }
+        if (Test-Path -LiteralPath $c) { return $c }
     }
     $cmd = Get-Command 7z.exe -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
@@ -57,7 +57,7 @@ function Find-RetailInstall {
         "$env:ProgramFiles\Steam\steamapps\common\EscapeFromTarkov"
     )
     foreach ($c in $candidates) {
-        if (Test-Path (Join-Path $c "EscapeFromTarkov.exe")) { return $c }
+        if (Test-Path -LiteralPath (Join-Path $c "EscapeFromTarkov.exe")) { return $c }
     }
     return $null
 }
@@ -68,19 +68,19 @@ function Get-FileWithResume {
         [string]$Destination
     )
     $dir = Split-Path $Destination -Parent
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
     $head = Invoke-WebRequest -Uri $Url -Method Head -UseBasicParsing
     $expectedLength = [int64]$head.Headers["Content-Length"]
 
-    if (Test-Path $Destination) {
-        $existing = Get-Item $Destination
+    if (Test-Path -LiteralPath $Destination) {
+        $existing = Get-Item -LiteralPath $Destination
         if ($existing.Length -eq $expectedLength) {
             Write-Host "Already downloaded, size matches: $Destination"
             return
         }
         Write-Host "Partial or stale file found ($($existing.Length) of $expectedLength bytes), removing and restarting."
-        Remove-Item $Destination -Force
+        Remove-Item -LiteralPath $Destination -Force
     }
 
     Write-Host "Downloading $Url"
@@ -95,7 +95,7 @@ function Get-FileWithResume {
         Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
     }
 
-    $final = Get-Item $Destination
+    $final = Get-Item -LiteralPath $Destination
     if ($final.Length -ne $expectedLength) {
         throw "Download incomplete: got $($final.Length) bytes, expected $expectedLength. Re-run the script to resume."
     }
@@ -123,7 +123,7 @@ function Test-PatchSourceCompleteness {
         $relative = $deltaPath.Substring($prefix.Length)
         $relative = $relative.Substring(0, $relative.Length - ".delta".Length)
         $checked++
-        if (-not (Test-Path (Join-Path $SourceRoot $relative))) {
+        if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot $relative))) {
             $missing.Add($relative)
         }
     }
@@ -159,12 +159,12 @@ if (-not $SkipCopy -and -not $RetailPath) {
 
 if (-not $SkipCopy) {
     $retailExe = Join-Path $RetailPath "EscapeFromTarkov.exe"
-    if (-not (Test-Path $retailExe)) {
+    if (-not (Test-Path -LiteralPath $retailExe)) {
         throw "RetailPath '$RetailPath' does not look like an EFT install (missing EscapeFromTarkov.exe)."
     }
 }
 
-if (-not (Test-Path $InstallPath)) {
+if (-not (Test-Path -LiteralPath $InstallPath)) {
     New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
 }
 
@@ -202,7 +202,7 @@ if (-not $SkipCopy) {
     }
 
     $crashHandler = Join-Path $InstallPath "UnityCrashHandler64.exe"
-    if (-not (Test-Path $crashHandler)) {
+    if (-not (Test-Path -LiteralPath $crashHandler)) {
         throw "UnityCrashHandler64.exe is missing from '$InstallPath' after copy. " +
               "This file is a common antivirus false-positive target and often gets quarantined or " +
               "silently skipped during copy. Check your antivirus quarantine/log, restore or re-copy " +
@@ -217,7 +217,7 @@ if (-not $SkipPatch) {
 
     Write-Step "Running patcher.exe (this can take a while for large bundle files)"
     $patcherExe = Join-Path $InstallPath "patcher.exe"
-    if (-not (Test-Path $patcherExe)) {
+    if (-not (Test-Path -LiteralPath $patcherExe)) {
         throw "patcher.exe not found in '$InstallPath' after extraction."
     }
     $proc = Start-Process -FilePath $patcherExe -WorkingDirectory $InstallPath -Wait -PassThru
@@ -225,7 +225,7 @@ if (-not $SkipPatch) {
         Write-Warning "patcher.exe exited with code $($proc.ExitCode)."
     }
 
-    $log = Get-ChildItem -Path $InstallPath -Filter "Log_*.txt" -ErrorAction SilentlyContinue |
+    $log = Get-ChildItem -LiteralPath $InstallPath -Filter "Log_*.txt" -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($log) {
         $exceptions = Select-String -Path $log.FullName -Pattern "EXCEPTION" -SimpleMatch

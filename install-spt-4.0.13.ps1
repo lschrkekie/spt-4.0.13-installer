@@ -195,10 +195,14 @@ if (-not $SkipVerify -and -not $SkipPatch) {
 
 if (-not $SkipCopy) {
     Write-Step "Copying retail game files into $InstallPath"
-    $robocopyArgs = @($RetailPath, $InstallPath, "/E", "/R:2", "/W:2", "/NFL", "/NDL", "/NJH", "/NJS")
-    $proc = Start-Process -FilePath "robocopy.exe" -ArgumentList $robocopyArgs -Wait -PassThru -NoNewWindow
-    if ($proc.ExitCode -ge 8) {
-        throw "robocopy failed with exit code $($proc.ExitCode)."
+    # Use the call operator, not Start-Process -ArgumentList: Start-Process
+    # joins array elements with a bare space and does not quote entries
+    # containing spaces, which silently splits paths like
+    # "C:\Battlestate Games\Escape from Tarkov" into multiple arguments.
+    & robocopy.exe $RetailPath $InstallPath /E /R:2 /W:2 /NFL /NDL /NJH /NJS
+    $robocopyExit = $LASTEXITCODE
+    if ($robocopyExit -ge 8) {
+        throw "robocopy failed with exit code $robocopyExit."
     }
 
     $crashHandler = Join-Path $InstallPath "UnityCrashHandler64.exe"

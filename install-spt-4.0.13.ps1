@@ -62,6 +62,44 @@ function Find-RetailInstall {
     return $null
 }
 
+function Resume-FileByRange {
+    param(
+        [string]$Url,
+        [string]$Destination,
+        [int64]$FromByte,
+        [int64]$ExpectedLength
+    )
+    $request = [System.Net.HttpWebRequest]::Create($Url)
+    $request.Method = "GET"
+    $request.AddRange([long]$FromByte)
+    try {
+        $response = [System.Net.HttpWebResponse]$request.GetResponse()
+    }
+    catch [System.Net.WebException] {
+        $response = [System.Net.HttpWebResponse]$_.Exception.Response
+    }
+
+    if ($response.StatusCode -ne [System.Net.HttpStatusCode]::PartialContent) {
+        $response.Close()
+        Write-Host "Server did not honor the range request (status $($response.StatusCode)), restarting from scratch."
+        Remove-Item -LiteralPath $Destination -Force
+        return $false
+    }
+
+    Write-Host "Resuming from byte $FromByte of $ExpectedLength."
+    $responseStream = $response.GetResponseStream()
+    $fileStream = [System.IO.File]::Open($Destination, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write)
+    try {
+        $responseStream.CopyTo($fileStream, 1MB)
+    }
+    finally {
+        $fileStream.Close()
+        $responseStream.Close()
+        $response.Close()
+    }
+    return $true
+}
+
 function Get-FileWithResume {
     param(
         [string]$Url,
@@ -71,28 +109,51 @@ function Get-FileWithResume {
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
     $head = Invoke-WebRequest -Uri $Url -Method Head -UseBasicParsing
-    $expectedLength = [int64]$head.Headers["Content-Length"]
+    # Windows PowerShell 5.1 returns a plain string here; PowerShell 7's
+    # HttpClient-based Invoke-WebRequest returns a string[] instead.
+    $contentLengthHeader = $head.Headers["Content-Length"]
+    if ($contentLengthHeader -is [array]) { $contentLengthHeader = $contentLengthHeader[0] }
+    $expectedLength = [int64]$contentLengthHeader
 
+    $existingLength = 0L
     if (Test-Path -LiteralPath $Destination) {
-        $existing = Get-Item -LiteralPath $Destination
-        if ($existing.Length -eq $expectedLength) {
+        $existingLength = (Get-Item -LiteralPath $Destination).Length
+        if ($existingLength -eq $expectedLength) {
             Write-Host "Already downloaded, size matches: $Destination"
             return
         }
-        Write-Host "Partial or stale file found ($($existing.Length) of $expectedLength bytes), removing and restarting."
-        Remove-Item -LiteralPath $Destination -Force
+        if ($existingLength -gt $expectedLength) {
+            Write-Host "Local file is larger than expected, discarding and restarting."
+            Remove-Item -LiteralPath $Destination -Force
+            $existingLength = 0L
+        }
     }
 
     Write-Host "Downloading $Url"
     Write-Host "  -> $Destination ($([math]::Round($expectedLength / 1MB, 1)) MB)"
 
-    $bitsAvailable = Get-Module -ListAvailable -Name BitsTransfer
-    if ($bitsAvailable) {
-        Import-Module BitsTransfer -ErrorAction Stop
-        Start-BitsTransfer -Source $Url -Destination $Destination -DisplayName "spt-4.0.13-installer"
+    if ($existingLength -gt 0) {
+        $resumed = Resume-FileByRange -Url $Url -Destination $Destination -FromByte $existingLength -ExpectedLength $expectedLength
+        if (-not $resumed) {
+            Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+        }
     }
     else {
-        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+        $usedBits = $false
+        if (Get-Module -ListAvailable -Name BitsTransfer) {
+            try {
+                Import-Module BitsTransfer -ErrorAction Stop
+                Start-BitsTransfer -Source $Url -Destination $Destination -DisplayName "spt-4.0.13-installer" -ErrorAction Stop
+                $usedBits = $true
+            }
+            catch {
+                Write-Warning "BITS transfer failed ($($_.Exception.Message)), falling back to Invoke-WebRequest."
+                Write-Warning "(Common cause: the BITS Windows service is disabled or blocked by policy on this machine.)"
+            }
+        }
+        if (-not $usedBits) {
+            Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+        }
     }
 
     $final = Get-Item -LiteralPath $Destination
